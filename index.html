@@ -3,72 +3,169 @@
 
 <head>
   <meta charset="utf-8">
-  <title>Texture Mapping</title>
+  <title>Ray Tracing</title>
   <style>
-    body { background: #111; color: #ccc; font-family: monospace; }
-    canvas { border: 1px solid #444; }
-    .layout { display: flex; gap: 10px; align-items: flex-start; }
-    .editors { display: flex; flex-direction: column; gap: 10px; }
-    textarea {
-      background: #222;
-      color: #0f0;
-      font: 14px monospace;
-      width: 400px;
-      height: 200px;
-      box-sizing: border-box;
-      white-space: pre;
+    body {
+      background: #111;
+      color: #ccc;
+      font-family: monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
     }
-    #shaderError { color: #f66; white-space: pre-wrap; width: 400px; margin: 0; }
-    .controls { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }
+    canvas { border: 1px solid #444; touch-action: none; }
+    .controls { margin-top: 15px; display: flex; flex-direction: column; gap: 8px; width: 640px; }
     .control-row { display: flex; align-items: center; gap: 10px; }
+    label { width: 140px; }
+    #errorMsg { color: #f66; white-space: pre-wrap; width: 640px; margin-top: 10px; }
   </style>
 </head>
 
 <body>
-  <h2>HW 6 Texture Mapping</h2>
+  <h2>HW 7 Ray Tracing</h2>
+  <p>Drag with the mouse to orbit the camera around the scene.</p>
 
-  <p>Edit the shaders on the left; the canvas updates as you type.<br>
-    Drag with the mouse to rotate the models.<br>
-    Use the arrow keys and w, s keys to move the camera.<br>
-    Use the slider and dropdown to rotate about an axis; the button starts/stops spinning.</p>
+  <canvas id="glcanvas" width="800" height="600"></canvas>
+  <pre id="errorMsg"></pre>
 
-  <div class="layout">
-    <div class="editors">
-      <div>
-        <b>Vertex Shader</b><br>
-        <textarea id="vertEditor" spellcheck="false"></textarea>
-      </div>
-      <div>
-        <b>Fragment Shader</b><br>
-        <textarea id="fragEditor" spellcheck="false"></textarea>
-      </div>
-      <pre id="shaderError"></pre>
+  <div class="controls">
+    <div class="control-row">
+      <label for="bounces">Max Bounces:</label>
+      <input type="range" id="bounces" min="1" max="12" value="6">
+      <span id="bouncesValue">6</span>
     </div>
-
-    <div>
-      <canvas id="glcanvas" width="640" height="400"></canvas>
-
-      <div class="controls">
-        <div class="control-row">
-          <label for="slider">Rotation Angle:</label>
-          <input type="range" id="slider" min="0" max="360" value="0">
-          <span id="sliderValue">0</span>
-        </div>
-        <div class="control-row">
-          <select id="axisSelect">
-            <option value="x">X Rotation</option>
-            <option value="y">Y Rotation</option>
-            <option value="z">Z Rotation</option>
-          </select>
-          <button id="spinButton">Start/Stop Rotation</button>
-        </div>
-      </div>
+    <div class="control-row">
+      <label for="ambient">Ambient Strength:</label>
+      <input type="range" id="ambient" min="0" max="1" step="0.01" value="0.00">
+      <span id="ambientValue">0.00</span>
+    </div>
+    <div class="control-row">
+      <label for="lightsticks">Lightstick Count:</label>
+      <input type="range" id="lightsticks" min="0" max="128" step="1" value="64">
+      <span id="lightsticksValue">64</span>
+    </div>
+    <div class="control-row">
+      <label for="spotlightColor">Spotlight Color:</label>
+      <input type="color" id="spotlightColor" value="#fc245c">
+      <span id="spotlightColorValue">#fc245c</span>
     </div>
   </div>
 
-  <script src="transforms.js"></script>
-  <script src="models.js"></script>
-  <script src="main.js"></script>
+<script>
+  const canvas = document.getElementById("glcanvas");
+  const gl = canvas.getContext("webgl2");
+  const errorMsg = document.getElementById("errorMsg");
+
+  let program;
+
+  function compile(type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      throw new Error(gl.getShaderInfoLog(shader));
+    }
+    return shader;
+  }
+
+  function createProgram(vsSource, fsSource) {
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsSource));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsSource));
+    gl.bindAttribLocation(prog, 0, "position");
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(prog));
+    }
+    return prog;
+  }
+
+  // Geometry setup (full-screen quad)
+  gl.bindVertexArray(gl.createVertexArray());
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(0);
+
+  // UI controls
+  const bounces = document.getElementById("bounces");
+  const ambient = document.getElementById("ambient");
+  const lightsticks = document.getElementById("lightsticks");
+  const spotlightColor = document.getElementById("spotlightColor");
+
+  for (const slider of [bounces, ambient, lightsticks]) {
+    slider.addEventListener("input", () => {
+      document.getElementById(slider.id + "Value").textContent = slider.value;
+    });
+  }
+
+  spotlightColor.addEventListener("input", () => {
+    document.getElementById("spotlightColorValue").textContent = spotlightColor.value;
+  });
+
+  function hexToRgb01(hex) {
+    const clean = hex.replace("#", "");
+    const num = parseInt(clean, 16);
+    return [
+      ((num >> 16) & 255) / 255,
+      ((num >> 8) & 255) / 255,
+      (num & 255) / 255
+    ];
+  }
+
+  // Camera orbit controls
+  let pitch = 0.3, yaw = 0.2;
+  canvas.addEventListener("pointerdown", e => canvas.setPointerCapture(e.pointerId));
+  canvas.addEventListener("pointermove", e => {
+    if (!canvas.hasPointerCapture(e.pointerId)) return;
+    yaw -= e.movementX * 0.005;
+    pitch = Math.min(1.4, Math.max(-0.2, pitch + e.movementY * 0.005));
+  });
+
+  function render(time) {
+    requestAnimationFrame(render);
+    if (!program) return;
+
+    const uniform = name => gl.getUniformLocation(program, name);
+    const [sr, sg, sb] = hexToRgb01(spotlightColor.value);
+
+    gl.uniform1f(uniform("u_time"), time / 1000);
+    gl.uniform2f(uniform("u_resolution"), canvas.width, canvas.height);
+    gl.uniform1i(uniform("u_maxBounces"), bounces.value);
+    gl.uniform1f(uniform("u_ambientStrength"), ambient.value);
+    gl.uniform2f(uniform("u_cameraOrbit"), pitch, yaw);
+    gl.uniform1i(uniform("u_lightStickCount"), lightsticks.value);
+    gl.uniform3f(uniform("u_spotlightColor"), sr, sg, sb);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  async function init() {
+    try {
+      const [vsResponse, fsResponse] = await Promise.all([
+        fetch("vertex.glsl"),
+        fetch("fragment.glsl")
+      ]);
+
+      if (!vsResponse.ok || !fsResponse.ok) {
+        throw new Error("Failed to load shader files. Ensure you are running a local web server.");
+      }
+
+      const vsSource = await vsResponse.text();
+      const fsSource = await fsResponse.text();
+
+      program = createProgram(vsSource, fsSource);
+      gl.useProgram(program);
+      requestAnimationFrame(render);
+    } catch (err) {
+      errorMsg.textContent = err.message;
+    }
+  }
+
+  init();
+</script>
 </body>
 
 </html>
